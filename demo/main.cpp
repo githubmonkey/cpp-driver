@@ -83,8 +83,8 @@ void demo(bool use_ssl) {
     {
 		int numberOfNodes = 1;
 
-        const cql_ccm_bridge_configuration_t& conf = cql::get_ccm_bridge_configuration();
-        cql_ccm_bridge_t::create(conf, "test", numberOfNodes, true);
+        //const cql_ccm_bridge_configuration_t& conf = cql::get_ccm_bridge_configuration();
+        //cql_ccm_bridge_t::create(conf, "test", numberOfNodes, true);
 
 		boost::shared_ptr<cql::cql_builder_t> builder = cql::cql_cluster_t::builder();
 		builder->with_log_callback(&log_callback);
@@ -136,6 +136,37 @@ void demo(bool use_ssl) {
                 // print the rows return by the successful query
                 print_rows(*future.get().result);
             }
+
+
+			// same with prepare/execute
+			boost::shared_ptr<cql::cql_query_t> unbound_select(
+                new cql::cql_query_t("SELECT * FROM schema_keyspaces WHERE keyspace_name = ?;", cql::CQL_CONSISTENCY_ONE));
+			future = session->prepare(unbound_select);
+			future.wait();
+
+			if (future.get().error.is_err()) {
+				// TODO: this always returns an error
+				std::cout << "error during prepare: " << future.get().error.message << std::endl;
+			} else {
+				std::vector<cql::cql_byte_t> queryid = future.get().result->query_id();
+
+				boost::shared_ptr<cql::cql_execute_t> bound(
+					new cql::cql_execute_t( queryid, cql::CQL_CONSISTENCY_ONE) ); 
+				
+				bound->push_back( "system" );
+				future = session->execute( bound );
+				
+				// wait for the query to execute
+				future.wait();
+
+				if (future.get().error.is_err()) {
+					// TODO: this always returns an error
+					std::cout << "error during prepare: " << future.get().error.message << std::endl;
+				} else {
+					// TODO: do something with result
+					
+				}
+			}
 
             // close the connection session
             session->close();
