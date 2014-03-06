@@ -23,6 +23,7 @@
 #include <map>
 #include <string>
 
+#include <boost/thread.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/function.hpp>
 #include <boost/thread/future.hpp>
@@ -99,11 +100,19 @@ public:
     execute(const boost::shared_ptr<cql_execute_t>& message) = 0;
 
     virtual void
+    set_keyspace(const std::string& new_keyspace) = 0;
+
+    virtual void
     close() = 0;
     
     // Returns unique session identifier
     virtual cql_uuid_t
     id() const = 0;
+
+#ifdef _DEBUG
+	virtual void 
+	inject_random_connection_lowest_layer_shutdown() = 0;
+#endif
 };
 
 } // namespace cql

@@ -22,7 +22,8 @@
 #include <memory>
 #include <boost/shared_ptr.hpp>
 #include <boost/noncopyable.hpp>
-#include <boost/asio/io_service.hpp>
+
+#include <cql/cql_config.hpp>
 
 namespace cql {
 
@@ -32,7 +33,7 @@ class cql_builder_t;
 class cql_metadata_t;
 
 
-class cql_cluster_t: boost::noncopyable {
+class CQL_EXPORT cql_cluster_t: boost::noncopyable {
 public:
     static boost::shared_ptr<cql_cluster_t>
     built_from(cql_initializer_t& initializer);

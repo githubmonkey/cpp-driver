@@ -21,13 +21,14 @@
 
 #include <vector>
 #include <boost/noncopyable.hpp>
+#include "cql/cql_config.hpp"
 #include "cql/cql.hpp"
 
 namespace cql {
 
 class cql_message_execute_impl_t;
 
-class cql_execute_t :
+class CQL_EXPORT cql_execute_t :
         boost::noncopyable {
 
 public:
@@ -56,6 +57,9 @@ public:
 
     void
     push_back(const std::string& val);
+            
+    void
+    push_back(const char* val);
 
     void
     push_back(const cql::cql_short_t val);
@@ -80,6 +84,12 @@ public:
 
     cql_message_execute_impl_t*
     impl() const;
+            
+    cql_stream_t
+    stream();
+            
+    void
+    set_stream(const cql_stream_t& stream);
 
 private:
     cql_message_execute_impl_t* _impl;

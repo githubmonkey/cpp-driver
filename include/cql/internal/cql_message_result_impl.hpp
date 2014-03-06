@@ -78,6 +78,12 @@ public:
     exists(const std::string& column) const;
 
     bool
+    column_name(int i,
+                std::string& output_keyspace,
+                std::string& output_table,
+                std::string& output_column) const;
+
+    bool
     column_class(int i,
                  std::string& output) const;
 
@@ -187,11 +193,14 @@ public:
     get_map(const std::string& column,
             cql::cql_map_t** output) const;
 
+    bool
+    get_keyspace_name(std::string& output) const;
+        
     inline bool
     is_valid(int i,
              cql::cql_column_type_enum column_type) const {
         bool index_null = false;
-        if (!is_null(i, index_null) || index_null) {
+        if (is_null(i, index_null) || index_null) {
             return false;
         }
 

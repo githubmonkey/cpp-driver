@@ -26,7 +26,7 @@
 #include <ext/functional>
 #endif
 #include "cql/internal/cql_defines.hpp"
-#include "cql/cql_serialization.hpp"
+#include "cql/internal/cql_serialization.hpp"
 
 #include "cql/internal/cql_result_metadata.hpp"
 
@@ -99,8 +99,8 @@ cql::cql_result_metadata_t::read(cql::cql_byte_t* input) {
             input = cql::decode_option(input, option.collection_secondary_type, option.collection_secondary_class);
         }
 
-        column_name_t name(keyspace_name, table_name, column_name);
-        _column_name_idx.insert(column_name_idx_t::value_type(name, i));
+        option.name = column_name_t(keyspace_name, table_name, column_name);
+        _column_name_idx.insert(column_name_idx_t::value_type(option.name, i));
         _columns.push_back(option);
     }
     return input;
@@ -157,9 +157,25 @@ cql::cql_result_metadata_t::global_table(const std::string& table) {
 }
 
 bool
+cql::cql_result_metadata_t::column_name(int i,
+                                        std::string& output_keyspace,
+                                        std::string& output_table,
+                                        std::string& output_column) const
+{
+    if (i >= _column_count || i < 0) {
+        return false;
+    }
+
+    output_keyspace = _columns[i].name.get<0>();
+    output_table = _columns[i].name.get<1>();
+    output_column = _columns[i].name.get<2>();
+    return true;
+}
+
+bool
 cql::cql_result_metadata_t::column_class(int i,
         std::string& output) const {
-    if (i > _column_count || i < 0) {
+    if (i >= _column_count || i < 0) {
         return false;
     }
 
@@ -194,7 +210,7 @@ cql::cql_result_metadata_t::column_class(const std::string& keyspace,
 bool
 cql::cql_result_metadata_t::column_type(int i,
                                         cql::cql_column_type_enum& output) const {
-    if (i > _column_count || i < 0) {
+    if (i >= _column_count || i < 0) {
         return false;
     }
 
@@ -276,7 +292,7 @@ cql::cql_result_metadata_t::get_index(const std::string& keyspace,
 bool
 cql::cql_result_metadata_t::collection_primary_class(int i,
         std::string& output) const {
-    if (i > _column_count || i < 0) {
+    if (i >= _column_count || i < 0) {
         return false;
     }
 
@@ -311,7 +327,7 @@ cql::cql_result_metadata_t::collection_primary_class(const std::string& keyspace
 bool
 cql::cql_result_metadata_t::collection_primary_type(int i,
         cql::cql_column_type_enum& output) const {
-    if (i > _column_count || i < 0) {
+    if (i >= _column_count || i < 0) {
         return false;
     }
 
@@ -346,7 +362,7 @@ cql::cql_result_metadata_t::collection_primary_type(const std::string& keyspace,
 bool
 cql::cql_result_metadata_t::collection_secondary_class(int i,
         std::string& output) const {
-    if (i > _column_count || i < 0) {
+    if (i >= _column_count || i < 0) {
         return false;
     }
 
@@ -381,7 +397,7 @@ cql::cql_result_metadata_t::collection_secondary_class(const std::string& keyspa
 bool
 cql::cql_result_metadata_t::collection_secondary_type(int i,
         cql::cql_column_type_enum& output) const {
-    if (i > _column_count || i < 0) {
+    if (i >= _column_count || i < 0) {
         return false;
     }
 

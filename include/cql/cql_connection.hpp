@@ -45,6 +45,7 @@ namespace cql {
 class cql_event_t;
 class cql_result_t;
 class cql_execute_t;
+class cql_session_t;
 struct cql_error_t;
 
 class cql_connection_t :
@@ -102,6 +103,9 @@ public:
     virtual cql_uuid_t
     id() const = 0;
 
+    virtual void
+    set_session_ptr(cql_session_t* session_ptr) = 0;
+            
     /**
        Connect to the server at the specified address and port.
 
@@ -256,12 +260,50 @@ public:
     virtual void
     set_credentials(const cql_credentials_t& credentials) = 0;
 
+    /** 
+        Informs the connection that it will have to use certain prepared statement (identified
+        by the ID in argument). Lazily triggers "PREPARE" query prior to any future activity.
+        Recommended only for advanced users.
+    */
+    virtual void
+    set_prepared_statement(const std::vector<cql_byte_t>& id) = 0;
+    
+    /** 
+        Modifies the argument, namely it appends the IDs of "PREPARE" statements that have
+        been set by set_prepared_statement, but not yet been sent to the DB.
+        Complexity: O(n), n being the number of statements *registered for preparation* so far.
+        Recommended only for advanced users.
+    */
+    virtual void
+    get_unprepared_statements(
+        std::vector<std::vector<cql_byte_t> > &output) const = 0;
+
+    /**
+        The connection may be forced (externally) to use a different keyspace than the one
+        obtained with recent "USE" query. This method answers whether it is necessary to
+        sync both keyspace names by firing an extra "USE" statement.
+        Recommended only for advanced users.
+    */
+    virtual bool
+    is_keyspace_syncd() const = 0;
+            
+    /**
+       Sets keyspace to be used by this connection. 
+       Triggers "USE" query prior to any next query if necessary.
+    */
+    virtual void
+    set_keyspace(const std::string& new_keyspace_name) = 0;
+            
     /**
        Force reconnect
     */
     virtual void
     reconnect() = 0;
 
+#ifdef _DEBUG
+	virtual void 
+	inject_lowest_layer_shutdown() = 0;
+#endif
 };
 
 } // namespace cql

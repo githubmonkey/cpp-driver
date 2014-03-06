@@ -133,6 +133,7 @@ class cql_session_impl_t :
     public cql_session_t,
     boost::noncopyable
 {
+
 public:
     cql_session_impl_t(
         const cql_session_callback_info_t&      callbacks,
@@ -154,8 +155,25 @@ public:
     virtual
 	~cql_session_impl_t();
 
+    void
+    set_keyspace(const std::string& new_keyspace);
+    
+    void
+    set_prepare_statement(
+                          const std::vector<cql_byte_t>& query_id,
+                          const std::string& query_text);
+
+#ifdef _DEBUG
+	void 
+	inject_random_connection_lowest_layer_shutdown();
+#endif
+
 private:
+    
     typedef std::map<cql_uuid_t, boost::shared_ptr<cql_connection_t> > cql_connections_collection_t;
+    typedef
+        std::map<std::vector<cql_byte_t>, std::string>
+        cql_id_query_map_t;
 
     struct client_container_t
     {
@@ -220,6 +238,16 @@ private:
         cql_connection_t::cql_message_callback_t callback,
         cql_connection_t::cql_message_errback_t  errback);
 
+    bool
+    setup_prepared_statements(
+        boost::shared_ptr<cql_connection_t> conn,
+        cql_stream_t*                       stream);
+    
+    bool
+    setup_keyspace(
+        boost::shared_ptr<cql_connection_t> conn,
+        cql_stream_t*                       stream);
+
     boost::shared_future<cql_future_result_t>
     query(
         const boost::shared_ptr<cql_query_t>& query);
@@ -280,7 +308,9 @@ private:
     add_to_connection_pool(
         cql_endpoint_t& host_address);
 
-    void
+    /* Note: the method returns an iterator to the next-after-removed-one element of `connections'.
+       Or connections->end() if no such element is present. */
+    cql_connections_collection_t::iterator
     try_remove_connection(
         cql_connections_collection_t* const connections,
         const cql_uuid_t&                   connection_id);
@@ -303,11 +333,10 @@ private:
     get_max_connections_number(
         const boost::shared_ptr<cql_host_t>& host);
 
-
     friend class cql_trashcan_t;
     typedef boost::ptr_map<cql_endpoint_t, cql_connections_collection_t> connection_pool_t;
 
-    boost::mutex                            _mutex;
+    boost::recursive_mutex                  _mutex;
     cql_session_t::cql_client_callback_t    _client_callback;
     cql_session_t::cql_ready_callback_t     _ready_callback;
     cql_session_t::cql_defunct_callback_t   _defunct_callback;
@@ -318,6 +347,13 @@ private:
     connection_pool_t                       _connection_pool;
     boost::shared_ptr<cql_trashcan_t>       _trashcan;
     connections_counter_t                   _connection_counters;
+    
+    std::string                             _keyspace_name;
+
+    cql_id_query_map_t                      _prepare_statements;    
+
+	bool _Iam_closed;
+    
 };
 
 } // namespace cql

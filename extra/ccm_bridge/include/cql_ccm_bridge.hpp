@@ -3,7 +3,6 @@
 
 #include <exception>
 #include <deque>
-#include <libssh2.h>
 
 #include <boost/smart_ptr.hpp>
 #include <boost/noncopyable.hpp>
@@ -43,22 +42,19 @@ namespace cql {
 		static boost::shared_ptr<cql_ccm_bridge_t> create(
 			const cql_ccm_bridge_configuration_t& settings,
 			const std::string& name,
-			unsigned nodes_count,
-			bool use_already_existing = false);
+			unsigned nodes_count);
 
 		static boost::shared_ptr<cql_ccm_bridge_t> create(
 			const cql_ccm_bridge_configuration_t& settings,
 			const std::string& name,
 			unsigned nodes_count_dc1,
-			unsigned nodes_count_dc2,
-			bool use_already_existing = false);
+			unsigned nodes_count_dc2);
 	private:
 		/* CCM functionality */
 		static const std::string CCM_COMMAND;
 		const std::string _ip_prefix;
 
-		void execute_ccm_command(const std::string& ccm_args, 
-								 bool use_already_existing = false);
+		void execute_ccm_command(const std::string& ccm_args);
 
 		void execute_ccm_and_print(const std::string& ccm_args);
 
@@ -86,8 +82,8 @@ namespace cql {
 		cql_escape_sequences_remover_t _esc_remover_stderr;
 
 		int _socket;
-		LIBSSH2_SESSION* _session;
-		LIBSSH2_CHANNEL* _channel;
+		struct ssh_internals;
+		boost::scoped_ptr<ssh_internals> _ssh_internals;
 	};
 
 	class cql_ccm_bridge_exception_t : public std::exception { 

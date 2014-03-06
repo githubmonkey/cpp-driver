@@ -227,6 +227,20 @@ decode_option(cql::cql_byte_t* input,
               cql::cql_column_type_enum& id,
               std::string& value);
 
+std::string
+decode_ipv4_from_bytes(const cql::cql_byte_t* data);
+    
+std::string
+decode_ipv6_from_bytes(const cql::cql_byte_t* data);
+
+std::ostream&
+encode_ipv4(std::ostream& output,
+            const std::string& ip);
+
+std::ostream&
+encode_ipv6(std::ostream& output,
+            const std::string& ip);
+
 std::ostream&
 encode_inet(std::ostream& output,
             const std::string& ip,

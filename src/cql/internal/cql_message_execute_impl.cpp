@@ -19,8 +19,8 @@
 #include <sstream>
 #include <vector>
 
-#include "cql/cql_vector_stream.hpp"
-#include "cql/cql_serialization.hpp"
+#include "cql/internal/cql_vector_stream.hpp"
+#include "cql/internal/cql_serialization.hpp"
 #include "cql/internal/cql_defines.hpp"
 #include "cql/internal/cql_util.hpp"
 
@@ -267,3 +267,16 @@ cql::cql_message_execute_impl_t::prepare(cql::cql_error_t*) {
     cql::encode_short(stream, consistency);
     return true;
 }
+
+cql::cql_stream_t
+cql::cql_message_execute_impl_t::stream()
+{
+    return _stream;
+}
+
+void
+cql::cql_message_execute_impl_t::set_stream(const cql_stream_t& stream)
+{
+    _stream = stream;
+}
+

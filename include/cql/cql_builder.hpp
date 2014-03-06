@@ -10,7 +10,7 @@
 #include <boost/smart_ptr.hpp>
 #include <boost/asio/ip/address.hpp>
 
-#include "cql/cql_connection.hpp"
+#include "cql/cql_config.hpp"
 
 #include "cql/policies/cql_round_robin_policy.hpp"
 #include "cql/policies/cql_exponential_reconnection_policy_t.hpp"
@@ -26,8 +26,10 @@ class cql_client_options_t
 {
 public:
     cql_client_options_t(
-        cql_connection_t::cql_log_callback_t log_callback) :
-        _log_callback(log_callback)
+        cql_connection_t::cql_log_callback_t log_callback,
+		int thread_pool_size) :
+        _log_callback(log_callback),
+		_thread_pool_size(thread_pool_size)
     {}
 
     inline cql_connection_t::cql_log_callback_t
@@ -36,8 +38,14 @@ public:
         return _log_callback;
     }
 
+	inline int thread_pool_size() const
+	{
+		return _thread_pool_size;
+	}
+
 private:
     cql_connection_t::cql_log_callback_t _log_callback;
+	int _thread_pool_size;
 };
 
 class cql_protocol_options_t
@@ -307,12 +315,12 @@ class cql_configuration_t
 {
 public:
     cql_configuration_t(
-        boost::asio::io_service&      io_service,
-        const cql_client_options_t&   client_options,
-        const cql_protocol_options_t& protocol_options,
-        const cql_pooling_options_t&  pooling_options,
-        const cql_policies_t&         policies,
-        const cql_credentials_t&      credentials) :
+        boost::shared_ptr<boost::asio::io_service> io_service,
+        const cql_client_options_t&                client_options,
+        const cql_protocol_options_t&              protocol_options,
+        const cql_pooling_options_t&               pooling_options,
+        const cql_policies_t&                      policies,
+        const cql_credentials_t&                   credentials) :
         _io_service(io_service),
         _client_options(client_options),
         _protocol_options(protocol_options),
@@ -351,7 +359,7 @@ public:
         return _credentials;
     }
 
-    inline boost::asio::io_service&
+    inline boost::shared_ptr<boost::asio::io_service>
     io_service()
     {
         return _io_service;
@@ -366,12 +374,12 @@ private:
         _policies.init(cluster);
     }
 
-    boost::asio::io_service& _io_service;
-    cql_client_options_t     _client_options;
-    cql_protocol_options_t   _protocol_options;
-    cql_pooling_options_t    _pooling_options;
-    cql_policies_t           _policies;
-    cql_credentials_t        _credentials;
+    boost::shared_ptr<boost::asio::io_service> _io_service;
+    cql_client_options_t                       _client_options;
+    cql_protocol_options_t                     _protocol_options;
+    cql_pooling_options_t                      _pooling_options;
+    cql_policies_t                             _policies;
+    cql_credentials_t                          _credentials;
 };
 
 class cql_initializer_t
@@ -384,7 +392,7 @@ public:
     configuration() = 0;
 };
 
-class cql_builder_t :
+class CQL_EXPORT cql_builder_t :
         public cql_initializer_t,
         boost::noncopyable
 {
@@ -392,8 +400,12 @@ public:
     static const int DEFAULT_PORT = 9042;
 
     cql_builder_t() :
-        _log_callback(0)
+        _io_service(new boost::asio::io_service),
+        _log_callback(0),
+		_thread_pool_size(2)
     {}
+    
+    virtual ~cql_builder_t() {}
 
     inline virtual const std::list<cql_endpoint_t>&
     contact_points() const
@@ -407,7 +419,7 @@ public:
         return boost::shared_ptr<cql_configuration_t>(
                    new cql_configuration_t(
                        _io_service,
-                       cql_client_options_t(_log_callback),
+					   cql_client_options_t(_log_callback,_thread_pool_size),
                        cql_protocol_options_t(
                            _contact_points,
                            _ssl_context),
@@ -425,7 +437,7 @@ public:
         boost::shared_ptr<boost::asio::ssl::context> ssl_context(
             new boost::asio::ssl::context(
 #if BOOST_VERSION <= 104800
-                _io_service,
+                *_io_service.get(),
 #endif
                 boost::asio::ssl::context::sslv23));
         _ssl_context = ssl_context;
@@ -471,13 +483,21 @@ public:
         const std::string& user_name,
         const std::string& password);
 
+	cql_builder_t&
+	set_thread_pool_size(int thread_pool_size)
+	{
+		_thread_pool_size=thread_pool_size;
+		return *this;
+	}
+
+
 private:
-    boost::asio::io_service                      _io_service;
+    boost::shared_ptr<boost::asio::io_service>   _io_service;
     std::list<cql_endpoint_t>                    _contact_points;
     boost::shared_ptr<boost::asio::ssl::context> _ssl_context;
     cql_connection_t::cql_log_callback_t         _log_callback;
     cql_credentials_t                            _credentials;
-
+	int											 _thread_pool_size;
 };
 
 } // namespace cql

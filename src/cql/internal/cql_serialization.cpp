@@ -16,18 +16,28 @@
 #include <vector>
 #include <map>
 #include <string>
+#include <cassert>
 
 #ifdef _WIN32
+#define NTDDI_VERSION 0x06000000
+#define _WIN32_WINNT 0x0600
+#include <Ws2tcpip.h>
 #include <Winsock2.h>
+
+#include <string.h> // For memset and memcpy.
 #else
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #endif
 
 #include <boost/foreach.hpp>
 #include <boost/detail/endian.hpp>
+#include <boost/lexical_cast.hpp>
+#include <boost/mpl/sizeof.hpp> // BOOST_MPL_ASSERT_RELATION
 
 #include "cql/internal/cql_defines.hpp"
-#include "cql/cql_serialization.hpp"
+#include "cql/internal/cql_serialization.hpp"
 
 using namespace std;
 
@@ -321,10 +331,11 @@ cql::decode_string(istream& input,
                    string& value) {
     cql::cql_short_t len;
     cql::decode_short(input, len);
-
-    vector<char> buffer(len, 0);
-    input.read(&buffer[0], len);
-    value.assign(buffer.begin(), buffer.end());
+	if (len) {
+	    vector<char> buffer(len, 0);
+		input.read(&buffer[0], len);
+		value.assign(buffer.begin(), buffer.end());
+	}
     return input;
 }
 
@@ -359,7 +370,9 @@ cql::decode_bytes(istream& input,
     len = ntohl(len);
 
     value.resize(len, 0);
-    input.read(reinterpret_cast<char*>(&value[0]), len);
+    if (len) {
+        input.read(reinterpret_cast<char*>(&value[0]), len);
+    }
     return input;
 }
 
@@ -380,7 +393,9 @@ cql::decode_short_bytes(istream& input,
     len = ntohs(len);
 
     value.resize(len, 0);
-    input.read(reinterpret_cast<char*>(&value[0]), len);
+    if (len) {
+        input.read(reinterpret_cast<char*>(&value[0]), len);
+	}
     return input;
 }
 
@@ -411,9 +426,11 @@ cql::decode_long_string(istream& input,
     input.read(reinterpret_cast<char*>(&len), sizeof(len));
     len = ntohl(len);
 
-    vector<char> buffer(len);
-    input.read(&buffer[0], len);
-    value.assign(buffer.begin(), buffer.end());
+    if (len) {
+        vector<char> buffer(len);
+        input.read(&buffer[0], len);
+        value.assign(buffer.begin(), buffer.end());
+    }
     return input;
 }
 
@@ -601,11 +618,148 @@ cql::decode_option(cql::cql_byte_t* input,
     return input;
 }
 
+static const char*
+inet_ntop_ipv4(const void* src, char* dst, int cnt) {
+#ifdef _WIN32
+// Interface to WinAPI's `WSAAddressToString'.
+    struct sockaddr_in srcaddr;
+    
+    memset(&srcaddr, 0, sizeof(struct sockaddr_in));
+    memcpy(&(srcaddr.sin_addr), src, sizeof(srcaddr.sin_addr));
+    
+    srcaddr.sin_family = AF_INET;
+    if (WSAAddressToString((struct sockaddr*) &srcaddr, sizeof(struct sockaddr_in), 0, dst, (LPDWORD) &cnt)) {
+        DWORD rv = WSAGetLastError();
+        return NULL;
+    }
+    return dst;
+#else
+// Thin wrapper around POSIX inet_ntop
+    return inet_ntop(AF_INET, src, dst, cnt);
+#endif
+}
+
+static const char*
+inet_ntop_ipv6(const void* src, char* dst, int cnt) {
+#ifdef _WIN32
+// Interface to WinAPI's `WSAAddressToString'.
+    struct sockaddr_in6 srcaddr;
+    
+    memset(&srcaddr, 0, sizeof(struct sockaddr_in6));
+    memcpy(&(srcaddr.sin6_addr), src, sizeof(srcaddr.sin6_addr));
+    
+    srcaddr.sin6_family = AF_INET6;
+    if (WSAAddressToString((struct sockaddr*) &srcaddr, sizeof(struct sockaddr_in6), 0, dst, (LPDWORD) &cnt)) {
+        DWORD rv = WSAGetLastError();
+        return NULL;
+    }
+    return dst;
+#else
+// Thin wrapper around POSIX inet_ntop
+    return inet_ntop(AF_INET6, src, dst, cnt);
+#endif
+}
+
+std::string
+cql::decode_ipv4_from_bytes(const cql::cql_byte_t* data) {
+    // It is worthwhile to check if cast of `data' to struct `in_addr'
+    // will not corrupt memory.
+//    BOOST_STATIC_ASSERT(sizeof(in_addr) == 4 && "Check for IPv4 address size failed");
+    BOOST_MPL_ASSERT_RELATION( boost::mpl::sizeof_<in_addr>::value, ==, 4 );
+    
+#ifdef _WIN32
+    // Max length of the output string; value copied from OS X headers.
+    const int out_buffer_size = 16;
+#else
+    // POSIX provides convenient macro for the max length of output buffer.
+    const int out_buffer_size = INET_ADDRSTRLEN;
+#endif
+    
+    char result[out_buffer_size];
+    if (inet_ntop_ipv4(data, result, out_buffer_size)) {
+        return std::string(result);
+    }
+    else return "";
+}
+
+std::string
+cql::decode_ipv6_from_bytes(const cql::cql_byte_t* data) {
+    // It is worthwhile to check if cast of `data' to struct `in6_addr'
+    // will not corrupt memory.
+//    BOOST_STATIC_ASSERT(sizeof(in6_addr) == 16 && "Check for IPv6 address size failed");
+    BOOST_MPL_ASSERT_RELATION( boost::mpl::sizeof_<in6_addr>::value, ==, 16 );
+    
+#ifdef _WIN32
+    // Max length of the output string; value copied from OS X headers.
+    const int out_buffer_size = 46;
+#else
+    // POSIX provides convenient macro for the max length of output buffer.
+    const int out_buffer_size = INET6_ADDRSTRLEN;
+#endif
+    
+    char result[out_buffer_size];
+    if (inet_ntop_ipv6(data, result, out_buffer_size)) {
+        return std::string(result);
+    }
+    else return "";
+}
+
+static int
+inet_pton_ipv4(const char* src,
+                    void* dst) {
+#ifdef _WIN32
+    return InetPton(AF_INET, src, dst);
+#else
+    return inet_pton(AF_INET, src, dst);
+#endif
+}
+
+static int
+inet_pton_ipv6(const char* src,
+                    void* dst) {
+#ifdef _WIN32
+    return InetPton(AF_INET6, src, dst);
+#else
+    return inet_pton(AF_INET6, src, dst);
+#endif
+}
+
+ostream&
+cql::encode_ipv4(ostream& output,
+                 const string& ip) {
+    const char buffer_size = sizeof(in_addr);
+    char buffer[buffer_size];
+    if (inet_pton_ipv4(ip.c_str(), buffer)) {
+        output.write(&buffer_size, sizeof(buffer_size));
+        output.write(buffer, buffer_size);
+    }
+    return output;
+}
+
+ostream&
+cql::encode_ipv6(ostream& output,
+                 const string& ip) {
+    const char buffer_size = sizeof(in6_addr);
+    char buffer[buffer_size];
+    if (inet_pton_ipv6(ip.c_str(), buffer)) {
+        output.write(&buffer_size, sizeof(buffer_size));
+        output.write(buffer, buffer_size);
+    }
+    return output;
+}
+
 ostream&
 cql::encode_inet(ostream& output,
                  const string& ip,
                  const cql::cql_int_t port) {
-    cql::encode_string(output, ip);
+    
+    if (ip.find(":") == std::string::npos) {
+    // Likely it is an IPv4 address
+        encode_ipv4(output, ip);
+    } else {
+        encode_ipv6(output, ip);
+    }
+    
     cql::encode_int(output, port);
     return output;
 }
@@ -614,7 +768,21 @@ istream&
 cql::decode_inet(istream& input,
                  string& ip,
                  cql::cql_int_t& port) {
-    cql::decode_string(input, ip);
+    cql::cql_byte_t len;
+    input.read(reinterpret_cast<char*>(&len), sizeof(len));
+    
+    vector<cql::cql_byte_t> buffer(len, 0);
+    input.read(reinterpret_cast<char*>(&buffer[0]), len);
+    
+    if (len == 4) {
+        ip = decode_ipv4_from_bytes(&buffer[0]);
+    } else if (len == 16) {
+        ip = decode_ipv6_from_bytes(&buffer[0]);
+    }
+    else {
+        assert(false && "Expected inet address to be 4 or 16 bytes long");
+    }
+    
     cql::decode_int(input, port);
     return input;
 }

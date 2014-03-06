@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include <boost/noncopyable.hpp>
+#include <cql/cql_config.hpp>
 
 namespace cql {
 
@@ -98,7 +99,7 @@ enum cql_result_type_enum {
 };
 
 enum cql_event_enum {
-    CQL_EVENT_TYPE_UNKOWN   = 0x00,
+    CQL_EVENT_TYPE_UNKNOWN  = 0x00,
     CQL_EVENT_TYPE_TOPOLOGY = 0x01,
     CQL_EVENT_TYPE_STATUS   = 0x02,
     CQL_EVENT_TYPE_SCHEMA   = 0x03
@@ -154,14 +155,12 @@ to_string(const cql_consistency_enum);
 // with library.
 // This function MUST be called only once.
 // This function is NOT thread safe.
-void
-cql_initialize();
+CQL_EXPORT void cql_initialize();
 
 // Terminates cql library.
 // This function must be called at program end, this MUST
 // be called only once.
-void
-cql_terminate();
+CQL_EXPORT void cql_terminate();
 
 } // namespace cql
 #endif // __CQL_H_INCLUDED__

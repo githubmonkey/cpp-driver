@@ -17,8 +17,8 @@
 #include <iostream>
 #include <sstream>
 #include <boost/foreach.hpp>
-#include "cql/cql_serialization.hpp"
-#include "cql/cql_vector_stream.hpp"
+#include "cql/internal/cql_serialization.hpp"
+#include "cql/internal/cql_vector_stream.hpp"
 #include "cql/internal/cql_defines.hpp"
 #include "cql/internal/cql_list_impl.hpp"
 #include "cql/internal/cql_map_impl.hpp"
@@ -204,6 +204,18 @@ cql::cql_message_result_impl_t::exists(const std::string& column) const {
 }
 
 bool
+cql::cql_message_result_impl_t::column_name(int i,
+                                            std::string& output_keyspace,
+                                            std::string& output_table,
+                                            std::string& output_column) const
+{
+    return _metadata.column_name(i,
+                                 output_keyspace,
+                                 output_table,
+                                 output_column);
+}
+
+bool
 cql::cql_message_result_impl_t::column_class(int i,
         std::string& output) const {
     return _metadata.column_class(i, output);
@@ -257,13 +269,13 @@ bool
 cql::cql_message_result_impl_t::is_null(
     int   i,
     bool& output) const {
-    if (i > _column_count || i < 0) {
-        return false;
+    if (i >= _column_count || i < 0) {
+        return true;
     }
     cql::cql_int_t row_size = 0;
     cql::decode_int(_row[i], row_size);
-    output = row_size <= 0;
-    return true;
+    output = (row_size <= 0);
+    return false;
 }
 
 bool
@@ -274,10 +286,10 @@ cql::cql_message_result_impl_t::is_null(
     if (_metadata.get_index(column, i)) {
         cql::cql_int_t row_size = 0;
         cql::decode_int(_row[i], row_size);
-        output = row_size <= 0;
-        return true;
+        output = (row_size <= 0);
+        return false;
     }
-    return false;
+    return true;
 }
 
 bool
@@ -364,7 +376,9 @@ cql::cql_message_result_impl_t::get_double(const std::string& column,
 bool
 cql::cql_message_result_impl_t::get_bigint(int i,
         cql::cql_bigint_t& output) const {
-    if (is_valid(i, cql::CQL_COLUMN_TYPE_BIGINT)) {
+    if (is_valid(i, cql::CQL_COLUMN_TYPE_BIGINT)
+          || is_valid(i, cql::CQL_COLUMN_TYPE_TIMESTAMP)
+          || is_valid(i, cql::CQL_COLUMN_TYPE_COUNTER)) {
         cql::decode_bigint(_row[i] + sizeof(cql_int_t), output);
         return true;
     }
@@ -408,7 +422,7 @@ cql::cql_message_result_impl_t::get_data(int i,
         cql::cql_byte_t** output,
         cql::cql_int_t& size) const {
     bool empty = false;
-    if (is_null(i, empty)) {
+    if (!is_null(i, empty)) {
         if (!empty) {
             cql_byte_t* pos = _row[i];
             *output = cql::decode_int(pos, size);
@@ -503,4 +517,10 @@ cql::cql_message_result_impl_t::get_map(const std::string& column,
         return get_map(i, output);
     }
     return false;
+}
+
+bool
+cql::cql_message_result_impl_t::get_keyspace_name(std::string& output) const {
+    output = _keyspace_name;
+    return true;
 }

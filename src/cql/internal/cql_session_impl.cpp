@@ -25,8 +25,11 @@
 #include "cql/exceptions/cql_exception.hpp"
 #include "cql/exceptions/cql_no_host_available_exception.hpp"
 #include "cql/exceptions/cql_too_many_connections_per_host_exception.hpp"
+#include "cql/exceptions/cql_connection_allocation_error.hpp"
 #include "cql/cql_host.hpp"
 #include "cql/internal/cql_trashcan.hpp"
+#include "cql/internal/cql_socket.hpp"
+#include "cql/internal/cql_connection_impl.hpp"
 
 
 cql::cql_session_impl_t::cql_session_impl_t(
@@ -37,11 +40,14 @@ cql::cql_session_impl_t::cql_session_impl_t(
     _defunct_callback(callbacks.defunct_callback()),
     _log_callback(callbacks.log_callback()),
     _uuid(cql_uuid_t::create()),
-    _configuration(configuration)
+    _configuration(configuration),
+    _Iam_closed(false)
 {}
 
 cql::cql_session_impl_t::~cql_session_impl_t()
-{}
+{
+	close();
+}
 
 void
 cql::cql_session_impl_t::init(
@@ -71,10 +77,13 @@ cql::cql_session_impl_t::free_connection(
     }
     connection->close();
 
-    connections_counter_t::iterator it = _connection_counters.find(connection->endpoint());
-    if (it != _connection_counters.end()) {
-        (*it->second)--;
-    }
+	{
+        boost::recursive_mutex::scoped_lock lock(_mutex);
+		connections_counter_t::iterator it = _connection_counters.find(connection->endpoint());
+		if (it != _connection_counters.end()) {
+			(*it->second)--;
+		}
+	}
 }
 
 long
@@ -90,11 +99,76 @@ cql::cql_session_impl_t::get_max_connections_number(
     return max_connections_per_host;
 }
 
+void
+cql::cql_session_impl_t::set_keyspace(const std::string& new_keyspace)
+{
+    boost::recursive_mutex::scoped_lock lock(_mutex);
+    _keyspace_name = new_keyspace;
+
+    for(connection_pool_t::iterator I  = _connection_pool.begin();
+        I != _connection_pool.end(); ++I)
+    {
+        cql_connections_collection_t& conn_collection_ptr = *(I->second);
+        for(cql_connections_collection_t::iterator
+                J  = conn_collection_ptr.begin();
+                J != conn_collection_ptr.end(); ++J)
+        {
+            J->second->set_keyspace(new_keyspace);
+        }
+    }
+    
+    for(connection_pool_t::iterator I  = _trashcan->_trashcan.begin();
+        I != _trashcan->_trashcan.end(); ++I)
+    {
+        cql_connections_collection_t& conn_collection_ptr = *(I->second);
+        for(cql_connections_collection_t::iterator
+                J  = conn_collection_ptr.begin();
+                J != conn_collection_ptr.end(); ++J)
+        {
+            J->second->set_keyspace(new_keyspace);
+        }
+    }
+}
+
+void
+cql::cql_session_impl_t::set_prepare_statement(
+    const std::vector<cql_byte_t>& query_id,
+    const std::string& query_text)
+{
+    boost::recursive_mutex::scoped_lock lock(_mutex);
+    _prepare_statements[query_id] = query_text;
+    
+    for(connection_pool_t::iterator I  = _connection_pool.begin();
+        I != _connection_pool.end(); ++I)
+    {
+        cql_connections_collection_t& conn_collection_ptr = *(I->second);
+        for(cql_connections_collection_t::iterator
+            J  = conn_collection_ptr.begin();
+            J != conn_collection_ptr.end(); ++J)
+        {
+            J->second->set_prepared_statement(query_id);
+        }
+    }
+    
+    for(connection_pool_t::iterator I  = _trashcan->_trashcan.begin();
+        I != _trashcan->_trashcan.end(); ++I)
+    {
+        cql_connections_collection_t& conn_collection_ptr = *(I->second);
+        for(cql_connections_collection_t::iterator
+            J  = conn_collection_ptr.begin();
+            J != conn_collection_ptr.end(); ++J)
+        {
+            J->second->set_prepared_statement(query_id);
+        }
+    }
+}
+
+
 bool
 cql::cql_session_impl_t::increase_connection_counter(
     const boost::shared_ptr<cql_host_t>& host)
 {
-    boost::mutex::scoped_lock lock(_mutex);
+    boost::recursive_mutex::scoped_lock lock(_mutex);
     cql_endpoint_t            endpoint        = host->endpoint();
     long                      max_connections = get_max_connections_number(host);
 
@@ -119,7 +193,7 @@ bool
 cql::cql_session_impl_t::decrease_connection_counter(
     const boost::shared_ptr<cql_host_t>& host)
 {
-    boost::mutex::scoped_lock       lock(_mutex);
+    boost::recursive_mutex::scoped_lock lock(_mutex);
     connections_counter_t::iterator it = _connection_counters.find(host->endpoint());
 
     if (it != _connection_counters.end()) {
@@ -147,13 +221,16 @@ cql::cql_session_impl_t::allocate_connection(
     connection->connect(host->endpoint(),
                         boost::bind(&cql_session_impl_t::connect_callback, this, promise, ::_1),
                         boost::bind(&cql_session_impl_t::connect_errback, this, promise, ::_1, ::_2));
+    connection->set_keyspace(_keyspace_name);
 
     boost::shared_future<cql_future_connection_t> shared_future = promise->shared_future();
     shared_future.wait();
 
     if (shared_future.get().error.is_err()) {
         decrease_connection_counter(host);
-        throw cql_exception("cannot connect to host: " + host->endpoint().to_string());
+        throw cql_connection_allocation_error(
+                ("Error when connecting to host: " + host->endpoint().to_string()).c_str());
+        connection.reset();
     }
 
     return connection;
@@ -163,7 +240,7 @@ cql::cql_session_impl_t::cql_connections_collection_t*
 cql::cql_session_impl_t::add_to_connection_pool(
     cql_endpoint_t& endpoint)
 {
-    boost::mutex::scoped_lock lock(_mutex);
+    boost::recursive_mutex::scoped_lock lock(_mutex);
     connection_pool_t::iterator it = _connection_pool.find(endpoint);
     if (it == _connection_pool.end()) {
         it = _connection_pool.insert(endpoint, new cql_connections_collection_t()).first;
@@ -172,7 +249,7 @@ cql::cql_session_impl_t::add_to_connection_pool(
     return it->second;
 }
 
-void
+cql::cql_session_impl_t::cql_connections_collection_t::iterator
 cql::cql_session_impl_t::try_remove_connection(
     cql_connections_collection_t* const connections,
     const cql_uuid_t&                   connection_id)
@@ -180,11 +257,14 @@ cql::cql_session_impl_t::try_remove_connection(
     // TODO: How we can guarantee that any other thread is not using
     // this connection object ?
 
-    cql_connections_collection_t::iterator iter = connections->find(connection_id);
+    cql_connections_collection_t::iterator tmp, iter = connections->find(connection_id);
+    tmp = iter;
     if (iter != connections->end()) {
+        ++tmp;
         free_connection(iter->second);
         connections->erase(iter);
     }
+    return tmp;
 }
 
 boost::shared_ptr<cql::cql_connection_t>
@@ -193,17 +273,20 @@ cql::cql_session_impl_t::try_find_free_stream(
     cql_connections_collection_t* const     connections,
     cql_stream_t*                           stream)
 {
+    boost::recursive_mutex::scoped_lock lock(_mutex);
+    
     const cql_pooling_options_t& pooling_options = _configuration->pooling_options();
     cql_host_distance_enum       distance        = host->distance(_configuration->policies());
 
     for (cql_connections_collection_t::iterator kv = connections->begin();
-         kv != connections->end(); ++kv)
+         kv != connections->end(); /* No increment */)
     {
         cql_uuid_t                          conn_id = kv->first;
         boost::shared_ptr<cql_connection_t> conn    = kv->second;
 
         if (!conn->is_healthy()) {
-            try_remove_connection(connections, conn_id);
+            kv = try_remove_connection(connections, conn_id);
+            continue;
         }
         else if (!conn->is_busy(pooling_options.max_simultaneous_requests_per_connection_treshold(distance))) {
             *stream = conn->acquire_stream();
@@ -214,9 +297,12 @@ cql::cql_session_impl_t::try_find_free_stream(
         else if ((long)connections->size() > pooling_options.core_connections_per_host(distance)) {
             if (conn->is_free(pooling_options.min_simultaneous_requests_per_connection_treshold(distance))) {
                 _trashcan->put(conn);
-                connections->erase(kv);
+                cql_connections_collection_t::iterator tmp = kv++;
+                connections->erase(tmp);
+                continue;
             }
         }
+        ++kv;
     }
 
     *stream = cql_stream_t();
@@ -240,30 +326,50 @@ cql::cql_session_impl_t::connect(
         cql_endpoint_t host_address = host->endpoint();
         tried_hosts->push_back(host_address);
         cql_connections_collection_t* connections = add_to_connection_pool(host_address);
-
-        boost::shared_ptr<cql_connection_t> conn = try_find_free_stream(host, connections, stream);
+        
+        boost::shared_ptr<cql_connection_t> conn;
+        conn = try_find_free_stream(host, connections, stream);
         if (conn) {
+            // Connection must know the pointer to the containing session.
+            // Otherwise it would be unable to propagate the result if
+            // employed for, e.g. USE query.
+            conn->set_session_ptr(this);
             return conn;
         }
 
         conn = _trashcan->recycle(host_address);
         if (conn && !conn->is_healthy()) {
             free_connection(conn);
-            conn = boost::shared_ptr<cql_connection_t>();
+            conn.reset();
         }
 
         if (!conn) {
-            if (!(conn = allocate_connection(host))) {
+            try {
+                if (!(conn = allocate_connection(host))) {
+                    continue;
+                }
+            }
+            catch (cql_connection_allocation_error& e) {
+                // This error is interpreted as host being dead.
+                host->set_down();
                 continue;
             }
+            catch (cql_too_many_connections_per_host_exception& e) {
+                // This happens; let's try with another host.
+                continue;
+            }
+            host->bring_up();
         }
 
-        *stream = conn->acquire_stream();
-        (*connections)[conn->id()] = conn;
+        if (conn) {
+            *stream = conn->acquire_stream();
+            (*connections)[conn->id()] = conn;
+            conn->set_session_ptr(this);
+        }
         return conn;
     }
 
-    throw cql_exception("no host is available according to load balancing policy.");
+    throw cql_no_host_available_exception("no host is available according to load balancing policy.");
 }
 
 cql::cql_stream_t
@@ -316,6 +422,96 @@ cql::cql_session_impl_t::execute(
     return cql_stream_t();
 }
 
+/** Assigns all the prepared statements (ever created within the session)
+    to the given connection. Possibly modifies the value pointed by `stream'.
+*/
+bool
+cql::cql_session_impl_t::setup_prepared_statements(
+    boost::shared_ptr<cql_connection_t> conn,
+    cql_stream_t*                       stream)
+{
+    if (!conn) {
+        return false;
+    }
+    
+    std::vector<std::vector<cql_byte_t> > unprepared;
+    conn->get_unprepared_statements(unprepared);
+
+    bool is_success = true;
+    
+    for (size_t i = 0u; i < unprepared.size(); ++i) {
+        if (_prepare_statements.find(unprepared[i]) == _prepare_statements.end()) {
+            // This should not happen: the connection was told to prepare a
+            // statement, but session knows nothing about it. We'll skip this statement.
+            is_success = false;
+            continue;
+        }
+    
+        std::string prepare_query_text = _prepare_statements[unprepared[i]];
+        boost::shared_ptr<cql_query_t> prepare_query(
+            new cql_query_t(prepare_query_text));
+
+        prepare_query->set_stream(*stream);
+
+        boost::shared_future<cql::cql_future_result_t> future_result
+            = conn->prepare(prepare_query);
+            
+        if (future_result.timed_wait(boost::posix_time::seconds(30))) { // TODO: set sensible (or none) time limit
+            // The stream was released after receiving the body. Now we need to re-acquire it.
+            *stream = conn->acquire_stream();
+            
+            if (future_result.get().error.is_err()) {
+                is_success = false;
+            }
+            else {
+                // It's a good idea to check whether returned query_id matches the requested one.
+                // If they don't - it would be a sign of a severe failure.
+                BOOST_ASSERT(future_result.get().result->query_id() == unprepared[i]);
+            }
+        }
+        else {
+            is_success = false;
+        }
+    }
+    
+    return is_success;
+}
+
+/** Assigns the keyspace name for the connection with the value used by session.
+    Possibly modifies the value pointed by `stream'.
+*/
+bool
+cql::cql_session_impl_t::setup_keyspace(
+    boost::shared_ptr<cql_connection_t> conn,
+    cql_stream_t*                       stream)
+{
+    if (!conn) {
+        return false;
+    }
+
+    bool is_success = true;
+    if (!(conn->is_keyspace_syncd())) {
+        boost::shared_ptr<cql_query_t> use_my_keyspace(
+            new cql_query_t("USE \""+_keyspace_name+"\";"));
+
+        use_my_keyspace->set_stream(*stream);
+        boost::shared_future<cql::cql_future_result_t> future_result
+            = conn->query(use_my_keyspace);
+        if (future_result.timed_wait(boost::posix_time::seconds(30))) { // TODO: set sensible (or none) time limit
+            // The stream was released after receiving the body. Now we need to re-acquire it.
+            *stream = conn->acquire_stream();
+            
+            if (future_result.get().error.is_err()) {
+                is_success = false;
+            }
+        }
+        else {
+            is_success = false;
+        }
+    }
+    return is_success;
+}
+
 boost::shared_future<cql::cql_future_result_t>
 cql::cql_session_impl_t::query(
     const boost::shared_ptr<cql_query_t>& query)
@@ -347,7 +543,7 @@ cql::cql_session_impl_t::prepare(
 
     if (conn) {
         query->set_stream(stream);
-		return conn->query(query);
+		return conn->prepare(query);
     }
 
     boost::promise<cql_future_result_t>       promise;
@@ -367,11 +563,9 @@ cql::cql_session_impl_t::execute(
 {
 	cql_stream_t stream;
     boost::shared_ptr<cql_connection_t> conn = get_connection(boost::shared_ptr<cql_query_t>(), &stream);
-
-	assert(0);
-	// TODO: Not implemented - change event to class and pass stream to execute
-
+    
 	if (conn) {
+        message->set_stream(stream);
         return conn->execute(message);
     }
 
@@ -388,7 +582,9 @@ cql::cql_session_impl_t::execute(
 void
 cql::cql_session_impl_t::close()
 {
-    boost::mutex::scoped_lock lock(_mutex);
+    boost::recursive_mutex::scoped_lock lock(_mutex);
+	if(_Iam_closed)
+		return;
 
 	for (connection_pool_t::iterator host_it = _connection_pool.begin();
          host_it != _connection_pool.end();
@@ -411,6 +607,8 @@ cql::cql_session_impl_t::close()
 
     log(0, "size of session::_connection_poll is "
         + boost::lexical_cast<std::string>(_connection_pool.size()));
+
+	_Iam_closed = true;
 }
 
 inline void
@@ -460,10 +658,69 @@ cql::cql_session_impl_t::get_connection(
         ->new_query_plan(query);
 
     std::list<cql_endpoint_t> tried_hosts;
-    return connect(query_plan, stream, &tried_hosts);
+    boost::shared_ptr<cql::cql_connection_t> conn
+        = connect(query_plan, stream, &tried_hosts);
+    
+    bool is_setup_keyspace_successful = false;
+    bool is_setup_prepared_successful = false;
+    
+    if (conn) {
+        // We cannot be sure if the new connection knows the
+        // name of used keyspace (or the prepared statements).
+        // Both must be set prior to usage.
+        is_setup_keyspace_successful = setup_keyspace(conn, stream);
+        is_setup_prepared_successful = setup_prepared_statements(conn, stream);
+        
+        
+        // We also maintain a connection-wide dictionary (vector, really) that maps
+        // from stream IDs to recent queries' strings. It is used to retrieve the
+        // the recipes for prepared queries if needed by a connection.
+        if (!(stream->is_invalid()) && query != NULL) {
+            boost::shared_ptr<cql_connection_impl_t<cql_socket_t> > conn_impl
+                = boost::static_pointer_cast<cql_connection_impl_t<cql_socket_t> >(conn);
+            conn_impl->set_stream_id_vs_query_string(stream->stream_id(), query->query());
+        }
+    }
+    
+    if (!is_setup_keyspace_successful || !is_setup_prepared_successful) {
+        // With unset keyspace name or without the full set of prepared
+        // statements, the connection is unlikely to work. Therefore,
+        // we pass null instead of a valid connection.
+        conn.reset();
+    }
+        
+    return conn;
 }
 
 cql::cql_uuid_t
 cql::cql_session_impl_t::id() const {
     return _uuid;
 }
+
+#ifdef _DEBUG
+void
+cql::cql_session_impl_t::inject_random_connection_lowest_layer_shutdown()
+{
+	boost::recursive_mutex::scoped_lock lock(_mutex);
+
+	size_t select_pool = (rand()*_connection_pool.size())/RAND_MAX;
+    for(connection_pool_t::iterator I  = _connection_pool.begin();
+        I != _connection_pool.end(); ++I)
+    {
+		if((select_pool--)==0)
+		{
+			size_t select_conn = (rand()*(*(I->second)).size())/RAND_MAX;
+			cql_connections_collection_t& conn_collection_ptr = *(I->second);
+			for(cql_connections_collection_t::iterator
+					J  = conn_collection_ptr.begin();
+					J != conn_collection_ptr.end(); ++J)
+			{
+				if((select_conn--)==0)
+				{
+					J->second->inject_lowest_layer_shutdown();
+				}
+			}
+		}
+    }
+}
+#endif

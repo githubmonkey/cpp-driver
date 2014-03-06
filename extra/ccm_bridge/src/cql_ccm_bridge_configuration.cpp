@@ -1,8 +1,8 @@
 #include <fstream>
 #include <boost/algorithm/string.hpp>
-#include <boost/log/trivial.hpp>
 #include <boost/lexical_cast.hpp>
 
+#include "logger.hpp"
 #include "cql_ccm_bridge_configuration.hpp"
 
 using namespace std;
@@ -11,15 +11,15 @@ namespace cql {
 	const int cql_ccm_bridge_configuration_t::DEFAULT_SSH_PORT = 22;
 
 	cql_ccm_bridge_configuration_t::cql_ccm_bridge_configuration_t() 
-		: _ssh_port(22),
-		  _ssh_host("localhost"),
-		  _ssh_user(), 
-		  _ssh_pass(),
-		  _cassandra_version("1.2.5"),
-		  _use_compression(false),
-		  _use_buffering(true),
-		  _use_logger(false),
-		  _ip_prefix()
+    :     _ip_prefix(),
+          _cassandra_version("1.2.5"),
+          _ssh_host("localhost"),
+          _ssh_port(22),
+          _ssh_user(),
+          _ssh_pass(),
+          _use_buffering(true),
+          _use_logger(false),
+          _use_compression(false)
 	{
 	}
 
@@ -66,7 +66,7 @@ namespace cql {
 		ifstream settings_file(file_name.c_str(), ios_base::in);
 
 		if(!settings_file) {
-			BOOST_LOG_TRIVIAL(error) 
+			CQL_LOG(error) 
 				<< "Cannot open configuration file: " << file_name;
 			return settings;
 		}
@@ -104,14 +104,14 @@ namespace cql {
 
 			if(!key.empty() && !value.empty()) {
 				settings[key] = value;
-				BOOST_LOG_TRIVIAL(info) 
+				CQL_LOG(info)
 					<< "Configuration key: " << key
 					<< " equals value: " << value;
 				return;
 			}
 		}
 
-		BOOST_LOG_TRIVIAL(warning)
+		CQL_LOG(warning)
 			<< "Invalid configuration entry: " 
 			<< line;
 	}
@@ -145,7 +145,7 @@ namespace cql {
 				_ssh_port = boost::lexical_cast<short>(value);
 			}
 			catch(boost::bad_lexical_cast&) {
-				BOOST_LOG_TRIVIAL(error)
+				CQL_LOG(error)
 					<< "Invalid SSH_PORT value: " << value;
 				_ssh_port = DEFAULT_SSH_PORT;
 			}
@@ -169,7 +169,7 @@ namespace cql {
 			_use_logger = to_bool(value);
 		}
 		else {
-			BOOST_LOG_TRIVIAL(warning)
+			CQL_LOG(warning)
 				<< "Unknown configuration option: "
 				<< key << " with value " << value;
 		}

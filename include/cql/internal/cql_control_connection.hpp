@@ -53,8 +53,8 @@ private:
 
     void
     conn_cassandra_event(
-        void*                          sender,
-        boost::shared_ptr<cql_event_t> event);
+        cql_connection_t&,
+        cql_event_t*);
 
     void
     setup_control_connection(
@@ -64,7 +64,8 @@ private:
     refresh_hosts();
 
     void
-    reconnection_callback();
+    reconnection_callback(
+        const boost::system::error_code& err);
 
     boost::mutex                                   _mutex;
     bool                                           _is_open;
@@ -79,7 +80,7 @@ private:
 
     static cql_host_t::ip_address_t
     make_ipv4_address_from_bytes(
-        cql::cql_byte_t* data);
+        const cql::cql_byte_t* data);
 
     static std::string
     select_keyspaces_expression()
